@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dist/
+.superpowers/
+.remember/
+node_modules/
+site/dist/
+data/index.json
+.pytest_cache/
+.coverage
+
+# Secrets / credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+*.secret
+docs/
