@@ -55,6 +55,7 @@ def _filter_and_rank(found: list[dict], args) -> list[dict]:
         max_price=args.max_price,
         min_reliability=args.min_reliability,
         min_cuda=min_cuda,
+        datacenter=(True if getattr(args, "datacenter", False) else None),
     )
     return offers_mod.rank(filtered, mode=args.rank)
 
@@ -231,6 +232,84 @@ def sync_cmd(args) -> None:
     print(f"Synced {len(labeled)} labeled instance(s) into the registry.")
 
 
+def plan_cmd(args) -> None:
+    from collections import defaultdict
+
+    from remote_hashcat.core import planner
+
+    provider = _provider()
+    found = provider.search_offers(offers_mod.build_query(gpu=args.gpu), limit=max(args.limit, 200))
+    min_cuda = args.min_cuda if args.min_cuda is not None else config.cuda_major_minor()
+    pool = offers_mod.apply_filters(
+        found, region=args.region, max_price=args.max_price,
+        min_reliability=args.min_reliability, min_cuda=min_cuda,
+        datacenter=(True if getattr(args, "datacenter", False) else None),
+    )
+    if not pool:
+        print(f"No {args.gpu} offers matched ({len(found)} before filters).")
+        return
+
+    # Price each offer for the WHOLE window: compute + disk (per-host $/GB/month,
+    # prorated over the hours) + one-time network (per-host $/GB).
+    priced = []
+    for o in pool:
+        n = o.get("num_gpus") or 0
+        if n <= 0:
+            continue
+        base = o.get("dph_base")
+        if base is None:
+            base = o.get("dph_total", 0.0)
+        storage = o.get("storage_cost") or 0.0                       # $/GB/month
+        inet = o.get("inet_down_cost")
+        if inet is None:
+            inet = (o.get("internet_down_cost_per_tb") or 0.0) / 1024.0  # $/GB
+        hourly = base + storage * args.disk / 730.0
+        window = hourly * args.hours + args.xfer_gb * inet
+        priced.append({"num_gpus": n, "cost": window, "hourly": hourly, "id": o.get("id")})
+
+    groups = defaultdict(list)
+    for it in priced:
+        groups[it["num_gpus"]].append(it)
+    for s in groups:
+        groups[s].sort(key=lambda x: x["cost"])
+    summary = ", ".join(f"{s}-GPU:{len(groups[s])}" for s in sorted(groups))
+
+    print(f"Plan · {args.gpu} · ${args.budget:.0f} budget · {args.hours:g}h · {args.disk} GB disk")
+    print(f"{len(priced)} offers ({summary})")
+    print(f"cost = compute + {args.disk} GB disk over {args.hours:g}h + {args.xfer_gb:g} GB network/instance "
+          f"(default ≈ image pull; add wordlist GB with --xfer-gb)")
+
+    fills = planner.max_fill_by_size(priced, args.budget)
+    mixes = planner.best_mixes(priced, args.budget, args.max_instances, top=6)
+    options, seen = [], set()
+    for opt in mixes + sorted(fills, key=lambda x: -x["gpus"]):
+        sig = tuple(sorted(opt["shape"].items()))
+        if sig not in seen:
+            seen.add(sig)
+            options.append(opt)
+    options.sort(key=lambda o: (-o["gpus"], o["cost"]))
+    options = options[:8]
+    if not options:
+        print("\nNothing fits. Raise --budget, lower --disk, or pick a cheaper GPU.")
+        return
+
+    labels = "ABCDEFGH"
+    print(f"\n  #   GPUs  inst  {'shape':<30} {'cost':>9}  {'left':>8}")
+    for i, o in enumerate(options):
+        tag = "  <- most GPUs" if i == 0 else ""
+        print(f"  {labels[i]}  {o['gpus']:>4}  {o['instances']:>4}  "
+              f"{planner.format_shape(o['shape']):<30} ${o['cost']:>7.2f}  ${o['leftover']:>6.2f}{tag}")
+
+    pick = (args.emit or "A").strip().upper()
+    idx = labels.index(pick) if pick in labels[:len(options)] else 0
+    chosen = options[idx]
+    print(f"\nProvision option {labels[idx]}  ({chosen['gpus']} GPUs, ${chosen['cost']:.2f}/{args.hours:g}h):")
+    for s in sorted(chosen["shape"], reverse=True):
+        for it in groups[s][:chosen["shape"][s]]:
+            print(f"  just up --offer {it['id']} --disk {args.disk}   # {s}-GPU  ${it['hourly']:.3f}/hr")
+    print("Offer IDs are live snapshots — provision soon (they get rented).")
+
+
 def _add_offer_filters(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("--gpu", help="GPU name, e.g. RTX_5090")
     sp.add_argument("--machine", type=int, help="Target a specific Vast machine id")
@@ -238,7 +317,10 @@ def _add_offer_filters(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("--num-gpus", type=int, dest="num_gpus", help="Require N GPUs (with --gpu)")
     sp.add_argument("--region", help="Substring match on geolocation, e.g. US or EU")
     sp.add_argument("--max-price", type=float, dest="max_price", help="Max $/hr")
-    sp.add_argument("--min-reliability", type=float, dest="min_reliability", default=0.9)
+    sp.add_argument("--min-reliability", type=float, dest="min_reliability", default=0.9,
+                    help="Min reliability 0..1 (e.g. 0.99 = 99%%)")
+    sp.add_argument("--secure", action="store_true", dest="datacenter",
+                    help="Secure Cloud only (vast datacenter-hosted machines)")
     sp.add_argument(
         "--min-cuda", type=float, dest="min_cuda",
         help="Min cuda_max_good (default: image CUDA major.minor)",
@@ -278,6 +360,28 @@ def main() -> None:
 
     py = sub.add_parser("sync", help="Reconcile the registry from Vast labels")
     py.set_defaults(func=sync_cmd)
+
+    ppl = sub.add_parser("plan", help="Budget-constrained fleet suggestions (read-only)")
+    ppl.add_argument("--gpu", required=True, help="GPU name, e.g. RTX_4090")
+    ppl.add_argument("--budget", type=float, required=True, help="Total budget in $")
+    ppl.add_argument("--hours", type=float, required=True, help="Session length in hours")
+    ppl.add_argument("--disk", type=int, default=config.DEFAULT_DISK_GB,
+                     help=f"Disk GB per instance, priced in (default {config.DEFAULT_DISK_GB})")
+    ppl.add_argument("--xfer-gb", type=float, dest="xfer_gb", default=17.0,
+                     help="Est. GB moved per instance (default 17 ~ image pull; add wordlist GB)")
+    ppl.add_argument("--emit", default="A", help="Which option's `up` commands to print (A, B, ...)")
+    ppl.add_argument("--region", help="Substring match on geolocation")
+    ppl.add_argument("--min-reliability", type=float, dest="min_reliability", default=0.9,
+                     help="Min reliability 0..1 (e.g. 0.99 = 99%%)")
+    ppl.add_argument("--secure", action="store_true", dest="datacenter",
+                     help="Secure Cloud only (vast datacenter-hosted machines)")
+    ppl.add_argument("--min-cuda", type=float, dest="min_cuda",
+                     help="Min cuda_max_good (default: image CUDA)")
+    ppl.add_argument("--max-price", type=float, dest="max_price",
+                     help="Optional per-instance $/hr cap")
+    ppl.add_argument("--max-instances", type=int, dest="max_instances", default=16)
+    ppl.add_argument("--limit", type=int, default=200)
+    ppl.set_defaults(func=plan_cmd)
 
     args = p.parse_args()
     try:

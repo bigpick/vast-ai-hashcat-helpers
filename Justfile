@@ -39,6 +39,9 @@ down *ARGS:
 sync:
     {{ python }} provision_worker sync
 
+plan *ARGS:
+    {{ python }} provision_worker plan {{ ARGS }}
+
 # --- Files (rsync to/from a fleet instance) ---
 
 send *ARGS:

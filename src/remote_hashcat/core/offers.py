@@ -26,9 +26,12 @@ def apply_filters(
     min_ram_mb: int = 16384,
     min_cpu_cores: int = 4,
     min_cuda: float = 0.0,
+    datacenter: bool | None = None,
 ) -> list[dict]:
     out = []
     for o in offers:
+        if datacenter and not o.get("datacenter"):
+            continue
         if o.get("reliability", 0) < min_reliability:
             continue
         if o.get("cpu_ram", 0) < min_ram_mb:

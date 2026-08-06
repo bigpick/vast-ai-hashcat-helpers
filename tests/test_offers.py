@@ -39,6 +39,14 @@ def test_apply_filters_reliability():
     assert len(out) == 1
 
 
+def test_apply_filters_secure_datacenter():
+    pool = [_o(id=1, datacenter=True), _o(id=2, datacenter=False), _o(id=3)]
+    secure = offers.apply_filters(pool, datacenter=True)
+    assert [o["id"] for o in secure] == [1]
+    # datacenter=None disables the filter
+    assert len(offers.apply_filters(pool, datacenter=None)) == 3
+
+
 def test_rank_cost():
     ranked = offers.rank([_o(id=1, dph_total=2.0), _o(id=2, dph_total=1.0)], "cost")
     assert [o["id"] for o in ranked] == [2, 1]
