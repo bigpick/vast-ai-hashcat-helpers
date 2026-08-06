@@ -106,17 +106,13 @@ class VastProvider:
         env: dict[str, str] | None = None,
         onstart_cmd: str | None = None,
         label: str | None = None,
-        ssh: bool = True,
-        direct: bool = True,
     ) -> int:
-        kwargs: dict = dict(
-            id=offer_id,
-            image=image,
-            disk=disk,
-            env=env or {},
-            ssh=ssh,
-            direct=direct,
-        )
+        # The vastai SDK validates kwargs against its CLI arg set; SSH is the
+        # default launch type (there are no `ssh=`/`direct=` kwargs). Pass only
+        # accepted args: id, image, disk, env, onstart_cmd, label.
+        kwargs: dict = dict(id=offer_id, image=image, disk=disk)
+        if env:
+            kwargs["env"] = env
         if onstart_cmd:
             kwargs["onstart_cmd"] = onstart_cmd
         if label:

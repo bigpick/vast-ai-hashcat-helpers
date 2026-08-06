@@ -47,6 +47,23 @@ send *ARGS:
 receive *ARGS:
     {{ python }} remote_hashcat receive {{ ARGS }}
 
+# --- Jobs (run hashcat on a fleet instance) ---
+
+run *ARGS:
+    {{ python }} remote_hashcat run {{ ARGS }}
+
+follow *ARGS:
+    {{ python }} remote_hashcat follow {{ ARGS }}
+
+status *ARGS:
+    {{ python }} remote_hashcat status {{ ARGS }}
+
+pull *ARGS:
+    {{ python }} remote_hashcat pull {{ ARGS }}
+
+stop *ARGS:
+    {{ python }} remote_hashcat stop {{ ARGS }}
+
 # --- Container ---
 
 build-image:

@@ -29,12 +29,18 @@ def test_repr_hides_key():
     assert repr(VastProvider(sdk=FakeSDK())) == "VastProvider(...)"
 
 
-def test_create_instance_sets_ssh_direct_and_returns_contract():
+def test_create_instance_passes_only_accepted_kwargs():
     sdk = FakeSDK()
-    contract = VastProvider(sdk=sdk).create_instance(offer_id=1, image="img", disk=10)
+    contract = VastProvider(sdk=sdk).create_instance(
+        offer_id=7, image="img", disk=40, label="remote-hashcat"
+    )
     assert contract == 4242
-    assert sdk.created["ssh"] is True
-    assert sdk.created["direct"] is True
+    assert sdk.created["id"] == 7
+    assert sdk.created["image"] == "img"
+    assert sdk.created["disk"] == 40
+    assert sdk.created["label"] == "remote-hashcat"
+    # ssh/direct are not valid vastai kwargs and must never be sent
+    assert "ssh" not in sdk.created and "direct" not in sdk.created
 
 
 def test_missing_api_key_fails_fast(monkeypatch):

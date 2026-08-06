@@ -1,7 +1,7 @@
 # vast-ai-hashcat-helpers
 
 Provision [Vast.ai](https://vast.ai) GPUs and run remote **hashcat** jobs from
-your host — no Hashtopolis server required. Reserve a fleet for a few days, crack
+your host. Reserve a fleet for a few days, crack
 against chosen instances, pull the potfile back, then tear it down.
 
 Two host CLIs over a shared core, plus a CUDA + hashcat worker image:
@@ -12,15 +12,6 @@ Two host CLIs over a shared core, plus a CUDA + hashcat worker image:
   back. *(phase 2)*
 - **`container/`** — the worker image, published to
   `ghcr.io/bigpick/vast-ai-hashcat-helpers`.
-
-## ⚠️ This is a public repo — keep secrets and data out of it
-
-- `VAST_API_KEY` and SSH keys come **only** from the environment / `~/.ssh`.
-  `.env` is gitignored.
-- **Never commit** hashes, wordlists, potfiles, or cracked output — that is user
-  data, not project code (see `.gitignore`).
-- The worker image contains no secrets, hashes, or wordlists.
-- `pre-commit` runs `ripsecrets` to catch accidental secret commits.
 
 ## Setup
 
