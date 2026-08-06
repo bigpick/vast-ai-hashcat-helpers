@@ -61,6 +61,13 @@ just send --instance 1 ./rules/best64.rule    /root/rules
 just run --instance 1 --hashfile hashes.txt -m 22000 \
     --wordlist rockyou.txt --rules best64.rule \
     --potfile-path ./potfiles/corp-ntlm.potfile -- -O -w 4
+#    Attack inputs are ORDERED (--wordlist/--maskfile push a file; --mask is literal);
+#    -a picks the mode. `--` still carries extra hashcat OPTIONS (-O, -w, --increment).
+#      -a 0 dict+rules : -a 0 --wordlist rockyou.txt --rules best64.rule
+#      -a 3 mask       : -a 3 --mask '?d?d?d?d?d?d?d?d'
+#      -a 3 maskfile   : -a 3 --maskfile rockyou-1-60.hcmask
+#      -a 6 hybrid     : -a 6 --wordlist rockyou.txt --mask '?d?d'   (dict, then mask)
+#      -a 7 hybrid     : -a 7 --mask '?d?d' --wordlist rockyou.txt   (mask, then dict)
 
 # 4. POLL a long job — Ctrl-C on `run` only stops watching; the job keeps cracking.
 just status --instance 1             # one-shot: speed / recovered / %
@@ -95,3 +102,31 @@ Run `just --list` to see every recipe.
 - 🔜 Distributed keyspace-splitting across N instances; optional auto-pull interval
   for long runs. (Vast `reserved` pricing needs a 1-month min, so it's out of scope
   for multi-day sessions — on-demand is already non-interruptible.)
+
+
+## Notes
+
+```
+  What you type (host side):
+
+  # -a 0  dict + rules
+  just run --instance 1 --hashfile h.txt -m 22000 --wordlist rockyou.txt --rules best64.rule -- -O -w 4
+
+  # -a 3  mask (literal)
+  just run --instance 1 --hashfile h.txt -m 0 -a 3 --mask '?d?d?d?d?d?d?d?d'
+
+  # -a 3  maskfile (a file of mask lines, pushed like a wordlist)
+  just run --instance 1 --hashfile h.txt -m 0 -a 3 --maskfile rockyou-1-60.hcmask
+
+  # -a 6 / -a 7  hybrid (order between dict and mask is preserved)
+  just run --instance 1 --hashfile h.txt -m 0 -a 6 --wordlist rockyou.txt --mask '?d?d'
+  just run --instance 1 --hashfile h.txt -m 0 -a 7 --mask '?d?d' --wordlist rockyou.txt
+
+  Composed correctly on the worker (verified, potfile/restore/status flags elided):
+  - -a 0 → … -r best64.rule -O -w 4 <hashfile> <wordlist>
+  - -a 3 → … <hashfile> ?d?d?d?d?d?d
+  - -a 6 → … <hashfile> <wordlist> ?d?d ← dict then mask, order intact
+
+  Mechanics: --wordlist/--maskfile push a local file (to /root/wordlists and the new /root/masks) and become positionals; --mask passes a literal; a small ordered-collector keeps them in the exact sequence you typed (so -a 6 vs -a 7 compose
+  right). --rules stays a -r option; -- still carries extra hashcat options. README's Flow shows all five. -- is not where masks go — that was the trap you spotted.
+```

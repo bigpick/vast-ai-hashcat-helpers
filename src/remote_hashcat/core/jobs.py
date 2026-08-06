@@ -13,18 +13,21 @@ from dataclasses import dataclass, field
 REMOTE_JOBS_DIR = "/root/jobs"
 REMOTE_WORDLIST_DIR = "/root/wordlists"
 REMOTE_RULES_DIR = "/root/rules"
+REMOTE_MASK_DIR = "/root/masks"
 
 
 @dataclass
 class JobSpec:
     jobid: str
     hash_remote: str
-    wordlists_remote: list[str]
+    # Ordered tokens placed AFTER the hashfile: dict / maskfile paths and literal
+    # masks. This makes -a 0/1/3/6/7 all expressible (dict, mask, dict+mask, ...).
+    positionals: list[str] = field(default_factory=list)
     rules_remote: list[str] = field(default_factory=list)
     mode: str | None = None          # hashcat -m
     attack: str = "0"                # hashcat -a
     outfile_format: str = "2"        # 2 = plain
-    extra: list[str] = field(default_factory=list)  # passthrough hashcat args
+    extra: list[str] = field(default_factory=list)  # passthrough hashcat options
 
     def job_dir(self) -> str:
         return f"{REMOTE_JOBS_DIR}/{self.jobid}"
@@ -47,7 +50,7 @@ class JobSpec:
             argv += ["-r", rule]
         argv += self.extra
         argv.append(self.hash_remote)           # positional hashfile
-        argv += self.wordlists_remote            # positional dict(s)
+        argv += self.positionals                 # dict / mask / maskfile, in order
         return argv
 
     def launch_command(self) -> str:

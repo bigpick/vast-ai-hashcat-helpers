@@ -16,6 +16,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+class _TargetAction(argparse.Action):
+    """Collect --wordlist/--maskfile/--mask into one ordered list (args.targets),
+    preserving cross-flag order so hybrid attacks (-a 6/-a 7) compose correctly."""
+
+    def __init__(self, option_strings, dest, kind=None, **kwargs):
+        self._kind = kind
+        super().__init__(option_strings, dest, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        items = list(getattr(namespace, "targets", None) or [])
+        items.append((self._kind, values))
+        namespace.targets = items
+
+
 # --- file transfer ---------------------------------------------------------
 
 def _split_send(paths: list[str]) -> tuple[list[str], str]:
@@ -98,7 +112,7 @@ def run_cmd(args) -> None:
     hash_remote = f"{jobdir}/{Path(args.hashfile).name}"
 
     if t.run(t.exec_argv(
-        f"mkdir -p {jobdir} {jobs.REMOTE_WORDLIST_DIR} {jobs.REMOTE_RULES_DIR}"
+        f"mkdir -p {jobdir} {jobs.REMOTE_WORDLIST_DIR} {jobs.REMOTE_RULES_DIR} {jobs.REMOTE_MASK_DIR}"
     )) != 0:
         print("error: could not prepare remote dirs", file=sys.stderr)
         sys.exit(1)
@@ -107,12 +121,20 @@ def run_cmd(args) -> None:
     if t.run(t.send_argv([args.hashfile], f"{jobdir}/")) != 0:
         print("error: failed to send hashfile", file=sys.stderr)
         sys.exit(1)
-    wordlists_remote = []
-    for wl in args.wordlist or []:
-        if t.run(t.send_argv([wl], f"{jobs.REMOTE_WORDLIST_DIR}/")) != 0:
-            print(f"error: failed to send wordlist {wl}", file=sys.stderr)
+
+    # Attack inputs, in the order given: --wordlist/--maskfile push a local file,
+    # --mask is a literal. Together they become the positionals after the hashfile.
+    positionals = []
+    for kind, val in getattr(args, "targets", None) or []:
+        if kind == "mask":
+            positionals.append(val)
+            continue
+        remote_dir = jobs.REMOTE_WORDLIST_DIR if kind == "wordlist" else jobs.REMOTE_MASK_DIR
+        if t.run(t.send_argv([val], f"{remote_dir}/")) != 0:
+            print(f"error: failed to send {kind} {val}", file=sys.stderr)
             sys.exit(1)
-        wordlists_remote.append(f"{jobs.REMOTE_WORDLIST_DIR}/{Path(wl).name}")
+        positionals.append(f"{remote_dir}/{Path(val).name}")
+
     rules_remote = []
     for r in args.rules or []:
         t.run(t.send_argv([r], f"{jobs.REMOTE_RULES_DIR}/"))
@@ -123,7 +145,7 @@ def run_cmd(args) -> None:
         extra = extra[1:]
 
     spec = jobs.JobSpec(
-        jobid=jobid, hash_remote=hash_remote, wordlists_remote=wordlists_remote,
+        jobid=jobid, hash_remote=hash_remote, positionals=positionals,
         rules_remote=rules_remote, mode=args.mode, attack=args.attack,
         outfile_format=args.outfile_format, extra=extra,
     )
@@ -247,8 +269,14 @@ def main() -> None:
     pr.add_argument("--hashfile", required=True)
     pr.add_argument("-m", "--mode", help="hashcat -m hash mode")
     pr.add_argument("-a", "--attack", default="0", help="hashcat -a attack mode (default 0)")
-    pr.add_argument("--wordlist", action="append", help="local wordlist (repeatable)")
-    pr.add_argument("--rules", action="append", help="local rules file (repeatable)")
+    pr.add_argument("--wordlist", action=_TargetAction, kind="wordlist", metavar="FILE",
+                    help="dict file, pushed (repeatable; order kept with --mask/--maskfile)")
+    pr.add_argument("--maskfile", action=_TargetAction, kind="maskfile", metavar="FILE",
+                    help="mask/.hcmask file, pushed")
+    pr.add_argument("--mask", action=_TargetAction, kind="mask", metavar="MASK",
+                    help="literal mask, e.g. '?d?d?d?d' (for -a 3/6/7)")
+    pr.add_argument("--rules", action="append", metavar="FILE",
+                    help="rules file, pushed (repeatable; -a 0)")
     pr.add_argument("--potfile-path", dest="potfile_path", help="host destination for the potfile")
     pr.add_argument("--outfile-format", dest="outfile_format", default="2")
     pr.add_argument("--session", help="session/job id (default: UTC timestamp)")

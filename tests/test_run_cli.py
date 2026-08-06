@@ -37,3 +37,16 @@ def test_split_send_defaults_to_root():
 def test_split_receive_defaults_to_cwd():
     assert _split_receive(["a"]) == (["a"], ".")
     assert _split_receive(["r1", "r2", "./here"]) == (["r1", "r2"], "./here")
+
+
+def test_target_action_preserves_cross_flag_order():
+    import argparse
+
+    from remote_hashcat.run_cli import _TargetAction
+
+    p = argparse.ArgumentParser()
+    p.add_argument("--wordlist", action=_TargetAction, kind="wordlist")
+    p.add_argument("--maskfile", action=_TargetAction, kind="maskfile")
+    p.add_argument("--mask", action=_TargetAction, kind="mask")
+    ns = p.parse_args(["--mask", "?d?d", "--wordlist", "rockyou.txt", "--mask", "?l"])
+    assert ns.targets == [("mask", "?d?d"), ("wordlist", "rockyou.txt"), ("mask", "?l")]
