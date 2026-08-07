@@ -27,10 +27,13 @@ def apply_filters(
     min_cpu_cores: int = 4,
     min_cuda: float = 0.0,
     datacenter: bool | None = None,
+    min_inet_down: float = 0.0,
 ) -> list[dict]:
     out = []
     for o in offers:
         if datacenter and not o.get("datacenter"):
+            continue
+        if (o.get("inet_down") or 0) < min_inet_down:
             continue
         if o.get("reliability", 0) < min_reliability:
             continue

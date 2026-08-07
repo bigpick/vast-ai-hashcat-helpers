@@ -47,6 +47,14 @@ def test_apply_filters_secure_datacenter():
     assert len(offers.apply_filters(pool, datacenter=None)) == 3
 
 
+def test_apply_filters_min_inet_down():
+    pool = [_o(id=1, inet_down=97), _o(id=2, inet_down=900), _o(id=3)]  # id=3 has no inet_down
+    out = offers.apply_filters(pool, min_inet_down=500)
+    assert [o["id"] for o in out] == [2]
+    # default 0 keeps everything
+    assert len(offers.apply_filters(pool, min_inet_down=0)) == 3
+
+
 def test_rank_cost():
     ranked = offers.rank([_o(id=1, dph_total=2.0), _o(id=2, dph_total=1.0)], "cost")
     assert [o["id"] for o in ranked] == [2, 1]

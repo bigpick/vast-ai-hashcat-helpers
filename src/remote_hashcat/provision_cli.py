@@ -56,6 +56,7 @@ def _filter_and_rank(found: list[dict], args) -> list[dict]:
         min_reliability=args.min_reliability,
         min_cuda=min_cuda,
         datacenter=(True if getattr(args, "datacenter", False) else None),
+        min_inet_down=getattr(args, "min_down", 0.0) or 0.0,
     )
     return offers_mod.rank(filtered, mode=args.rank)
 
@@ -244,6 +245,7 @@ def plan_cmd(args) -> None:
         found, region=args.region, max_price=args.max_price,
         min_reliability=args.min_reliability, min_cuda=min_cuda,
         datacenter=(True if getattr(args, "datacenter", False) else None),
+        min_inet_down=getattr(args, "min_down", 0.0) or 0.0,
     )
     if not pool:
         print(f"No {args.gpu} offers matched ({len(found)} before filters).")
@@ -265,7 +267,15 @@ def plan_cmd(args) -> None:
             inet = (o.get("internet_down_cost_per_tb") or 0.0) / 1024.0  # $/GB
         hourly = base + storage * args.disk / 730.0
         window = hourly * args.hours + args.xfer_gb * inet
-        priced.append({"num_gpus": n, "cost": window, "hourly": hourly, "id": o.get("id")})
+        priced.append({
+            "num_gpus": n, "cost": window, "hourly": hourly, "id": o.get("id"),
+            "machine_id": o.get("machine_id"),
+            "reliability": o.get("reliability") or 0.0,
+            "dlperf": o.get("dlperf") or 0.0,
+            "inet_down": o.get("inet_down") or 0.0,
+            "inet_up": o.get("inet_up") or 0.0,
+            "geo": str(o.get("geolocation") or "").strip().lstrip(", ").strip(),
+        })
 
     groups = defaultdict(list)
     for it in priced:
@@ -304,10 +314,19 @@ def plan_cmd(args) -> None:
     idx = labels.index(pick) if pick in labels[:len(options)] else 0
     chosen = options[idx]
     print(f"\nProvision option {labels[idx]}  ({chosen['gpus']} GPUs, ${chosen['cost']:.2f}/{args.hours:g}h):")
+    machine_ids = []
     for s in sorted(chosen["shape"], reverse=True):
         for it in groups[s][:chosen["shape"][s]]:
-            print(f"  just up --offer {it['id']} --disk {args.disk}   # {s}-GPU  ${it['hourly']:.3f}/hr")
+            machine_ids.append(it["machine_id"])
+            print(f"  just up --offer {it['id']} --disk {args.disk}"
+                  f"   # {s}-GPU ${it['hourly']:.3f}/hr | machine {it['machine_id']}"
+                  f" | rel {it['reliability'] * 100:.1f}% | dlperf {it['dlperf']:.0f}"
+                  f" | net {it['inet_down']:.0f}/{it['inet_up']:.0f} Mbps | {it['geo']}")
     print("Offer IDs are live snapshots — provision soon (they get rented).")
+    ids_csv = ",".join(str(m) for m in machine_ids if m)
+    if ids_csv:
+        print("\nInspect these machines — paste into the vast console search box, or run:")
+        print(f"  vastai search offers 'machine_id in [{ids_csv}]'")
 
 
 def _add_offer_filters(sp: argparse.ArgumentParser) -> None:
@@ -321,6 +340,8 @@ def _add_offer_filters(sp: argparse.ArgumentParser) -> None:
                     help="Min reliability 0..1 (e.g. 0.99 = 99%%)")
     sp.add_argument("--secure", action="store_true", dest="datacenter",
                     help="Secure Cloud only (vast datacenter-hosted machines)")
+    sp.add_argument("--min-down", type=float, dest="min_down", default=0.0,
+                    help="Min instance download Mbps (matters for pushing image/wordlists)")
     sp.add_argument(
         "--min-cuda", type=float, dest="min_cuda",
         help="Min cuda_max_good (default: image CUDA major.minor)",
@@ -375,6 +396,8 @@ def main() -> None:
                      help="Min reliability 0..1 (e.g. 0.99 = 99%%)")
     ppl.add_argument("--secure", action="store_true", dest="datacenter",
                      help="Secure Cloud only (vast datacenter-hosted machines)")
+    ppl.add_argument("--min-down", type=float, dest="min_down", default=0.0,
+                     help="Min instance download Mbps (matters for pushing image/wordlists)")
     ppl.add_argument("--min-cuda", type=float, dest="min_cuda",
                      help="Min cuda_max_good (default: image CUDA)")
     ppl.add_argument("--max-price", type=float, dest="max_price",
